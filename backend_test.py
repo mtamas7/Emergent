@@ -59,9 +59,13 @@ class RPGBackendTester:
             response = requests.get(f"{self.base_url}/character/{TEST_USER_ID}", timeout=10)
             if response.status_code == 200:
                 self.character_data = response.json()
-                # Validate character structure
-                required_fields = ['id', 'name', 'level', 'experience', 'gold', 'health', 'maxHealth', 'mana', 'maxMana', 'stats', 'equipment']
+                # Validate character structure (handle both 'id' and '_id')
+                required_fields = ['name', 'level', 'experience', 'gold', 'health', 'maxHealth', 'mana', 'maxMana', 'stats', 'equipment']
                 missing_fields = [field for field in required_fields if field not in self.character_data]
+                
+                # Check for id field (either 'id' or '_id')
+                if 'id' not in self.character_data and '_id' not in self.character_data:
+                    missing_fields.append('id/_id')
                 
                 if not missing_fields:
                     self.log_test("Get Character", True, f"Character: {self.character_data['name']}, Level: {self.character_data['level']}, Gold: {self.character_data['gold']}")
