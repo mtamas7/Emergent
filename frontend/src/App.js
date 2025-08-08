@@ -11,7 +11,17 @@ function App() {
         <Routes>
           <Route path="/" element={<GameLayout />} />
         </Routes>
-        <Toaster />
+        <Toaster 
+          position="top-right"
+          toastOptions={{
+            duration: 3000,
+            style: {
+              background: 'rgb(30 41 59)',
+              color: 'white',
+              border: '1px solid rgb(139 92 246 / 0.2)'
+            }
+          }}
+        />
       </BrowserRouter>
     </div>
   );

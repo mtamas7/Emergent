@@ -1,35 +1,98 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { mockShopItems, getRarityColor, getRarityBg, mockCharacter } from '../data/mock';
-import { ShoppingBag, Coins, Sword, Shield, Sparkles } from 'lucide-react';
+import apiService, { getRarityColor, getRarityBg } from '../services/api';
+import { ShoppingBag, Coins, Sword, Shield, Sparkles, Loader2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 const Shop = () => {
-  const [playerGold, setPlayerGold] = useState(mockCharacter.gold);
-  const [shopItems, setShopItems] = useState(mockShopItems);
+  const [shopItems, setShopItems] = useState([]);
+  const [playerGold, setPlayerGold] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(null);
+  const [error, setError] = useState(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    loadShopData();
+  }, []);
+
+  const loadShopData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Load shop items and player data
+      const [items, character] = await Promise.all([
+        apiService.getShopItems(),
+        apiService.getCharacter()
+      ]);
+      
+      setShopItems(items);
+      setPlayerGold(character.gold);
+      
+    } catch (err) {
+      setError('Hiba a bolt betöltésekor');
+      toast({
+        title: "Hiba",
+        description: "Nem sikerült betölteni a bolt adatait",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filterByType = (type) => {
     if (type === 'all') return shopItems;
     return shopItems.filter(item => item.type === type);
   };
 
-  const buyItem = (item) => {
-    if (playerGold >= item.price) {
-      setPlayerGold(prev => prev - item.price);
+  const buyItem = async (item) => {
+    if (actionLoading) return;
+    
+    try {
+      setActionLoading(`buy_${item._id}`);
+      
+      if (playerGold < item.price) {
+        toast({
+          title: "Nincs elég arany!",
+          description: `${item.price - playerGold} arannyal több kell a vásárláshoz.`,
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      const result = await apiService.buyItem('player1', item._id, 1);
+      
       toast({
         title: "Vásárlás sikeres!",
-        description: `${item.name} megvásárolva ${item.price} aranyért!`,
+        description: result.message,
       });
-    } else {
+      
+      // Update player gold
+      setPlayerGold(prev => prev - item.price);
+      
+      // Optionally reload character data to ensure consistency
+      setTimeout(async () => {
+        try {
+          const character = await apiService.getCharacter();
+          setPlayerGold(character.gold);
+        } catch (error) {
+          console.error('Error reloading character:', error);
+        }
+      }, 1000);
+      
+    } catch (error) {
       toast({
-        title: "Nincs elég arany!",
-        description: `${item.price - playerGold} arannyal több kell a vásárláshoz.`,
+        title: "Vásárlási hiba",
+        description: error.response?.data?.detail || "Nem sikerült megvásárolni a tárgyat",
         variant: "destructive"
       });
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -56,6 +119,7 @@ const Shop = () => {
           {item.effect && <div>Hatás: {item.effect}</div>}
           {item.value && <div>Érték: {item.value}</div>}
           {item.strength && <div>Erő: +{item.strength}</div>}
+          {item.description && <div className="text-xs text-gray-500 italic">{item.description}</div>}
         </div>
 
         <div className="flex items-center justify-between">
@@ -66,15 +130,43 @@ const Shop = () => {
           <Button 
             size="sm" 
             onClick={() => buyItem(item)}
-            disabled={!canAfford(item.price)}
+            disabled={!canAfford(item.price) || actionLoading === `buy_${item._id}`}
             className={canAfford(item.price) ? "" : "opacity-50"}
           >
-            {canAfford(item.price) ? "Vásárol" : "Nincs elég arany"}
+            {actionLoading === `buy_${item._id}` ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                {canAfford(item.price) ? "Vásárol" : "Nincs elég arany"}
+              </>
+            )}
           </Button>
         </div>
       </CardContent>
     </Card>
   );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center text-red-400 p-8">
+        <p>{error}</p>
+        <button 
+          onClick={loadShopData}
+          className="mt-4 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+        >
+          Újrapróbálás
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -117,7 +209,7 @@ const Shop = () => {
             <TabsContent value="all">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filterByType('all').map(item => (
-                  <ShopItem key={item.id} item={item} />
+                  <ShopItem key={item._id} item={item} />
                 ))}
               </div>
             </TabsContent>
@@ -125,7 +217,7 @@ const Shop = () => {
             <TabsContent value="weapon">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filterByType('weapon').map(item => (
-                  <ShopItem key={item.id} item={item} />
+                  <ShopItem key={item._id} item={item} />
                 ))}
               </div>
             </TabsContent>
@@ -133,7 +225,7 @@ const Shop = () => {
             <TabsContent value="armor">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filterByType('armor').map(item => (
-                  <ShopItem key={item.id} item={item} />
+                  <ShopItem key={item._id} item={item} />
                 ))}
               </div>
             </TabsContent>
@@ -141,7 +233,7 @@ const Shop = () => {
             <TabsContent value="consumable">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filterByType('consumable').map(item => (
-                  <ShopItem key={item.id} item={item} />
+                  <ShopItem key={item._id} item={item} />
                 ))}
               </div>
             </TabsContent>
