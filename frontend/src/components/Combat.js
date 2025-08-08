@@ -3,60 +3,107 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Progress } from './ui/progress';
 import { Badge } from './ui/badge';
-import { mockEnemies, mockCharacter } from '../data/mock';
-import { Sword, Shield, Zap, Heart, Trophy, RotateCcw } from 'lucide-react';
+import apiService from '../services/api';
+import { Sword, Shield, Zap, Heart, Trophy, RotateCcw, Loader2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 const Combat = () => {
+  const [enemies, setEnemies] = useState([]);
   const [currentEnemy, setCurrentEnemy] = useState(null);
-  const [playerHealth, setPlayerHealth] = useState(mockCharacter.health);
+  const [playerHealth, setPlayerHealth] = useState(100);
   const [enemyHealth, setEnemyHealth] = useState(0);
+  const [playerMaxHealth, setPlayerMaxHealth] = useState(100);
   const [isPlayerTurn, setIsPlayerTurn] = useState(true);
   const [combatLog, setCombatLog] = useState([]);
   const [battleEnded, setBattleEnded] = useState(false);
   const [victory, setVictory] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
   const { toast } = useToast();
 
-  const startBattle = (enemy) => {
+  useEffect(() => {
+    loadEnemies();
+    loadPlayerData();
+  }, []);
+
+  const loadEnemies = async () => {
+    try {
+      setLoading(true);
+      const enemiesData = await apiService.getEnemies();
+      setEnemies(enemiesData);
+    } catch (error) {
+      toast({
+        title: "Hiba",
+        description: "Nem sikerült betölteni az ellenfeleket",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadPlayerData = async () => {
+    try {
+      const character = await apiService.getCharacter();
+      setPlayerHealth(character.health);
+      setPlayerMaxHealth(character.maxHealth);
+    } catch (error) {
+      console.error('Error loading player data:', error);
+    }
+  };
+
+  const startBattle = async (enemy) => {
     setCurrentEnemy(enemy);
     setEnemyHealth(enemy.health);
-    setPlayerHealth(mockCharacter.health);
     setIsPlayerTurn(true);
     setCombatLog([`Harc kezdődik ${enemy.name} ellen!`]);
     setBattleEnded(false);
     setVictory(false);
+    
+    // Reset player health for battle
+    await loadPlayerData();
   };
 
-  const playerAttack = () => {
-    if (!isPlayerTurn || battleEnded) return;
+  const playerAttack = async () => {
+    if (!isPlayerTurn || battleEnded || actionLoading) return;
 
-    const damage = Math.floor(Math.random() * mockCharacter.stats.strength) + 10;
-    const actualDamage = Math.max(1, damage - currentEnemy.defense);
-    
-    setEnemyHealth(prev => {
-      const newHealth = Math.max(0, prev - actualDamage);
-      if (newHealth === 0) {
-        setBattleEnded(true);
-        setVictory(true);
-        setCombatLog(prev => [...prev, `${actualDamage} sebzést okozol!`, `${currentEnemy.name} legyőzve!`]);
-        toast({
-          title: "Győzelem!",
-          description: `${currentEnemy.experience} XP és ${currentEnemy.goldReward} arany szerzése!`,
-        });
-      } else {
-        setCombatLog(prev => [...prev, `${actualDamage} sebzést okozol!`]);
-      }
-      return newHealth;
-    });
-    
-    setIsPlayerTurn(false);
-    
-    // Enemy turn after 1 second
-    setTimeout(() => {
+    try {
+      setActionLoading(true);
+      
+      // Get current character stats for damage calculation
+      const character = await apiService.getCharacter();
+      const baseDamage = Math.floor(Math.random() * character.stats.strength) + 10;
+      const actualDamage = Math.max(1, baseDamage - currentEnemy.defense);
+      
+      setEnemyHealth(prev => {
+        const newHealth = Math.max(0, prev - actualDamage);
+        if (newHealth === 0) {
+          setBattleEnded(true);
+          setVictory(true);
+          setCombatLog(prev => [...prev, `${actualDamage} sebzést okozol!`, `${currentEnemy.name} legyőzve!`]);
+          
+          // Give rewards
+          handleVictoryRewards(character);
+        } else {
+          setCombatLog(prev => [...prev, `${actualDamage} sebzést okozol!`]);
+        }
+        return newHealth;
+      });
+      
+      setIsPlayerTurn(false);
+      
+      // Enemy turn after 1.5 seconds
       if (!battleEnded) {
-        enemyAttack();
+        setTimeout(() => {
+          enemyAttack();
+        }, 1500);
       }
-    }, 1000);
+      
+    } catch (error) {
+      console.error('Error in player attack:', error);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const enemyAttack = () => {
@@ -85,15 +132,49 @@ const Combat = () => {
     setIsPlayerTurn(true);
   };
 
+  const handleVictoryRewards = async (character) => {
+    try {
+      // Update character with rewards
+      const newExperience = character.experience + currentEnemy.experience;
+      const newGold = character.gold + currentEnemy.goldReward;
+      
+      await apiService.updateCharacter('player1', {
+        experience: newExperience,
+        gold: newGold
+      });
+      
+      toast({
+        title: "Győzelem!",
+        description: `${currentEnemy.experience} XP és ${currentEnemy.goldReward} arany szerzése!`,
+      });
+      
+    } catch (error) {
+      console.error('Error giving rewards:', error);
+      toast({
+        title: "Győzelem!",
+        description: "Győztél, de hiba történt a jutalmak kiosztásakor",
+        variant: "destructive"
+      });
+    }
+  };
+
   const resetBattle = () => {
     setCurrentEnemy(null);
-    setPlayerHealth(mockCharacter.health);
     setEnemyHealth(0);
     setIsPlayerTurn(true);
     setCombatLog([]);
     setBattleEnded(false);
     setVictory(false);
+    loadPlayerData(); // Reset player health
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+      </div>
+    );
+  }
 
   if (!currentEnemy) {
     return (
@@ -107,8 +188,8 @@ const Combat = () => {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {mockEnemies.map(enemy => (
-                <Card key={enemy.id} className="bg-slate-700/50 hover:bg-slate-600/50 transition-colors cursor-pointer">
+              {enemies.map(enemy => (
+                <Card key={enemy.id || enemy._id} className="bg-slate-700/50 hover:bg-slate-600/50 transition-colors cursor-pointer">
                   <CardContent className="p-4" onClick={() => startBattle(enemy)}>
                     <div className="flex items-center gap-3 mb-3">
                       <span className="text-3xl">{enemy.image}</span>
@@ -162,33 +243,42 @@ const Combat = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Player */}
             <div className="text-center space-y-4">
               <div className="text-6xl">🧙‍♂️</div>
-              <h3 className="text-xl font-bold text-white">{mockCharacter.name}</h3>
+              <h3 className="text-xl font-bold text-white">Kalandor</h3>
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-red-300">Élet</span>
-                  <span className="text-white">{playerHealth} / {mockCharacter.maxHealth}</span>
+                  <span className="text-white">{playerHealth} / {playerMaxHealth}</span>
                 </div>
                 <Progress 
-                  value={(playerHealth / mockCharacter.maxHealth) * 100} 
+                  value={(playerHealth / playerMaxHealth) * 100} 
                   className="h-4 bg-slate-700 [&>div]:bg-red-500" 
                 />
               </div>
               {isPlayerTurn && !battleEnded && (
                 <div className="space-y-2">
-                  <Button onClick={playerAttack} className="w-full" size="lg">
-                    <Sword className="h-4 w-4 mr-2" />
+                  <Button 
+                    onClick={playerAttack} 
+                    className="w-full" 
+                    size="lg"
+                    disabled={actionLoading}
+                  >
+                    {actionLoading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Sword className="h-4 w-4 mr-2" />
+                    )}
                     Támadás
                   </Button>
                   <div className="grid grid-cols-2 gap-2">
-                    <Button variant="outline" size="sm">
+                    <Button variant="outline" size="sm" disabled>
                       <Shield className="h-4 w-4 mr-1" />
                       Védelem
                     </Button>
-                    <Button variant="outline" size="sm">
+                    <Button variant="outline" size="sm" disabled>
                       <Zap className="h-4 w-4 mr-1" />
                       Varázslat
                     </Button>

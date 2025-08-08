@@ -1,12 +1,89 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Progress } from './ui/progress';
 import { Badge } from './ui/badge';
-import { mockCharacter, getRarityColor } from '../data/mock';
-import { Sword, Shield, Zap, Heart, Star, Crown } from 'lucide-react';
+import apiService, { getRarityColor } from '../services/api';
+import { Sword, Shield, Zap, Heart, Star, Crown, Loader2 } from 'lucide-react';
+import { useToast } from '../hooks/use-toast';
 
 const CharacterSheet = () => {
-  const character = mockCharacter;
+  const [character, setCharacter] = useState(null);
+  const [equippedItems, setEquippedItems] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    loadCharacterData();
+  }, []);
+
+  const loadCharacterData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const characterData = await apiService.getCharacter();
+      setCharacter(characterData);
+      
+      // Load equipped items details
+      await loadEquippedItems(characterData.equipment);
+    } catch (err) {
+      setError('Hiba a karakter betöltésekor');
+      toast({
+        title: "Hiba",
+        description: "Nem sikerült betölteni a karakter adatait",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadEquippedItems = async (equipment) => {
+    try {
+      const inventory = await apiService.getInventory();
+      const itemsById = {};
+      
+      inventory.forEach(item => {
+        itemsById[item._id] = item;
+      });
+
+      const equipped = {};
+      Object.entries(equipment).forEach(([slot, itemId]) => {
+        if (itemId && itemsById[itemId]) {
+          equipped[slot] = itemsById[itemId];
+        }
+      });
+      
+      setEquippedItems(equipped);
+    } catch (err) {
+      console.error('Error loading equipped items:', err);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center text-red-400 p-8">
+        <p>{error}</p>
+        <button 
+          onClick={loadCharacterData}
+          className="mt-4 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+        >
+          Újrapróbálás
+        </button>
+      </div>
+    );
+  }
+
+  if (!character) return null;
+
   const xpPercentage = (character.experience / character.experienceToNext) * 100;
   const hpPercentage = (character.health / character.maxHealth) * 100;
   const mpPercentage = (character.mana / character.maxMana) * 100;
@@ -33,6 +110,17 @@ const CharacterSheet = () => {
       charisma: "Karizma"
     };
     return names[stat] || stat;
+  };
+
+  const getSlotName = (slot) => {
+    const names = {
+      weapon: "Fegyver",
+      armor: "Páncél",
+      helmet: "Sisak",
+      boots: "Csizma",
+      accessory: "Kiegészítő"
+    };
+    return names[slot] || slot;
   };
 
   return (
@@ -115,23 +203,33 @@ const CharacterSheet = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {Object.entries(character.equipment).map(([slot, item]) => (
-            <div key={slot} className={`p-3 rounded-lg border ${getRarityColor(item.rarity)} bg-slate-700/50`}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-purple-300 uppercase">{slot}</span>
-                <Badge variant="outline" className={getRarityColor(item.rarity)}>
-                  {item.rarity}
-                </Badge>
+          {Object.entries(character.equipment).map(([slot, itemId]) => {
+            const item = equippedItems[slot];
+            
+            return (
+              <div key={slot} className={`p-3 rounded-lg border ${item ? getRarityColor(item.rarity) + ' bg-slate-700/50' : 'bg-slate-700/30 border-slate-600'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-purple-300 uppercase">{getSlotName(slot)}</span>
+                  {item && (
+                    <Badge variant="outline" className={getRarityColor(item.rarity)}>
+                      {item.rarity}
+                    </Badge>
+                  )}
+                </div>
+                <div className="font-medium text-white">
+                  {item ? item.name : 'Nincs felszerelve'}
+                </div>
+                {item && (
+                  <div className="text-sm text-gray-400 mt-1">
+                    {item.damage && `Sebzés: ${item.damage}`}
+                    {item.defense && `Védelem: ${item.defense}`}
+                    {item.speed && `Sebesség: ${item.speed}`}
+                    {item.strength && `Erő: +${item.strength}`}
+                  </div>
+                )}
               </div>
-              <div className="font-medium text-white">{item.name}</div>
-              <div className="text-sm text-gray-400 mt-1">
-                {item.damage && `Sebzés: ${item.damage}`}
-                {item.defense && `Védelem: ${item.defense}`}
-                {item.speed && `Sebesség: ${item.speed}`}
-                {item.strength && `Erő: +${item.strength}`}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
     </div>

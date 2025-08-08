@@ -1,58 +1,104 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { mockInventory, getRarityColor, getRarityBg } from '../data/mock';
-import { Package, Sword, Shield, Sparkles, Trash2 } from 'lucide-react';
+import apiService, { getRarityColor, getRarityBg } from '../services/api';
+import { Package, Sword, Shield, Sparkles, Trash2, Loader2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 const Inventory = () => {
-  const [inventory, setInventory] = useState(mockInventory);
+  const [inventory, setInventory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(null);
+  const [error, setError] = useState(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    loadInventory();
+  }, []);
+
+  const loadInventory = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const inventoryData = await apiService.getInventory();
+      setInventory(inventoryData);
+    } catch (err) {
+      setError('Hiba az inventár betöltésekor');
+      toast({
+        title: "Hiba",
+        description: "Nem sikerült betölteni az inventárt",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filterByType = (type) => {
     if (type === 'all') return inventory;
     return inventory.filter(item => item.type === type);
   };
 
-  const useItem = (item) => {
-    if (item.type === 'consumable') {
-      if (item.quantity > 1) {
-        setInventory(prev => 
-          prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity - 1 } : i)
-        );
+  const useItem = async (item) => {
+    if (actionLoading) return;
+    
+    try {
+      setActionLoading(item._id);
+      
+      if (item.type === 'consumable') {
+        const result = await apiService.useItem('player1', item._id, 1);
+        toast({
+          title: "Tárgy használva",
+          description: result.message,
+        });
       } else {
-        setInventory(prev => prev.filter(i => i.id !== item.id));
+        const result = await apiService.equipItem('player1', item._id);
+        toast({
+          title: "Felszerelve",
+          description: result.message,
+        });
       }
       
+      // Reload inventory to reflect changes
+      await loadInventory();
+      
+    } catch (error) {
       toast({
-        title: "Tárgy használva",
-        description: `${item.name} használatba véve!`,
+        title: "Hiba",
+        description: error.response?.data?.detail || "Nem sikerült használni a tárgyat",
+        variant: "destructive"
       });
-    } else {
-      toast({
-        title: "Felszerelve",
-        description: `${item.name} felszerelve!`,
-      });
+    } finally {
+      setActionLoading(null);
     }
   };
 
-  const sellItem = (item) => {
-    const sellPrice = Math.floor((item.value || 10) * 0.5);
+  const sellItem = async (item) => {
+    if (actionLoading) return;
     
-    if (item.quantity > 1) {
-      setInventory(prev => 
-        prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity - 1 } : i)
-      );
-    } else {
-      setInventory(prev => prev.filter(i => i.id !== item.id));
+    try {
+      setActionLoading(`sell_${item._id}`);
+      
+      const result = await apiService.sellItem('player1', item._id, 1);
+      toast({
+        title: "Tárgy eladva",
+        description: result.message,
+      });
+      
+      // Reload inventory to reflect changes
+      await loadInventory();
+      
+    } catch (error) {
+      toast({
+        title: "Hiba",
+        description: error.response?.data?.detail || "Nem sikerült eladni a tárgyat",
+        variant: "destructive"
+      });
+    } finally {
+      setActionLoading(null);
     }
-    
-    toast({
-      title: "Tárgy eladva",
-      description: `${item.name} eladva ${sellPrice} aranyért!`,
-    });
   };
 
   const InventoryItem = ({ item }) => (
@@ -78,45 +124,70 @@ const Inventory = () => {
           {item.effect && <div>Hatás: {item.effect}</div>}
           {item.value && <div>Érték: {item.value}</div>}
           {item.speed && <div>Sebesség: +{item.speed}</div>}
+          {item.strength && <div>Erő: +{item.strength}</div>}
         </div>
 
         <div className="flex gap-2">
-          {item.type === 'consumable' ? (
-            <Button 
-              size="sm" 
-              onClick={() => useItem(item)}
-              className="flex-1"
-            >
-              Használ
-            </Button>
-          ) : (
-            <Button 
-              size="sm" 
-              onClick={() => useItem(item)}
-              className="flex-1"
-            >
-              Felszerel
-            </Button>
-          )}
+          <Button 
+            size="sm" 
+            onClick={() => useItem(item)}
+            className="flex-1"
+            disabled={actionLoading === item._id}
+          >
+            {actionLoading === item._id ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                {item.type === 'consumable' ? 'Használ' : 'Felszerel'}
+              </>
+            )}
+          </Button>
           <Button 
             size="sm" 
             variant="outline" 
             onClick={() => sellItem(item)}
             className="px-3"
+            disabled={actionLoading === `sell_${item._id}`}
           >
-            <Trash2 className="h-4 w-4" />
+            {actionLoading === `sell_${item._id}` ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
           </Button>
         </div>
       </CardContent>
     </Card>
   );
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center text-red-400 p-8">
+        <p>{error}</p>
+        <button 
+          onClick={loadInventory}
+          className="mt-4 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+        >
+          Újrapróbálás
+        </button>
+      </div>
+    );
+  }
+
   return (
     <Card className="bg-slate-800/50 backdrop-blur border-purple-500/20">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Package className="h-5 w-5" />
-          Inventár
+          Inventár ({inventory.length} tárgy)
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -141,7 +212,7 @@ const Inventory = () => {
           <TabsContent value="all" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filterByType('all').map(item => (
-                <InventoryItem key={item.id} item={item} />
+                <InventoryItem key={item._id} item={item} />
               ))}
             </div>
           </TabsContent>
@@ -149,7 +220,7 @@ const Inventory = () => {
           <TabsContent value="weapon" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filterByType('weapon').map(item => (
-                <InventoryItem key={item.id} item={item} />
+                <InventoryItem key={item._id} item={item} />
               ))}
             </div>
           </TabsContent>
@@ -157,7 +228,7 @@ const Inventory = () => {
           <TabsContent value="armor" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filterByType('armor').map(item => (
-                <InventoryItem key={item.id} item={item} />
+                <InventoryItem key={item._id} item={item} />
               ))}
             </div>
           </TabsContent>
@@ -165,7 +236,7 @@ const Inventory = () => {
           <TabsContent value="consumable" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filterByType('consumable').map(item => (
-                <InventoryItem key={item.id} item={item} />
+                <InventoryItem key={item._id} item={item} />
               ))}
             </div>
           </TabsContent>
@@ -173,7 +244,7 @@ const Inventory = () => {
           <TabsContent value="misc" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filterByType('misc').map(item => (
-                <InventoryItem key={item.id} item={item} />
+                <InventoryItem key={item._id} item={item} />
               ))}
             </div>
           </TabsContent>
